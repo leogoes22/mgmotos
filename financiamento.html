@@ -618,7 +618,7 @@ var MG = {
   siteBase: '',            // ex.: 'https://mgmotosrj.com.br/' (vazio = pasta atual)
 
   // Estoque automático (AutoCerto -> N8N -> site). Vazio = usa o estoque atual embutido abaixo.
-  estoqueApi: '',
+  estoqueApi: 'https://n8n.leadvox.com.br/webhook/estoque-mgmotos',
   autocertoUnidade: 4425,
 
   // Leads dos formulários para o N8N (opcional). Vazio = só abre o WhatsApp.
@@ -747,7 +747,7 @@ function deApi(v){
   caracs = caracs.map(function(c){ return typeof c === 'string' ? c.trim() : (c.nome || c.Nome || c.descricao || c.Descricao || ''); }).filter(Boolean);
   var m = {
     id: String(v.id || v.Id || v.codigo || v.Codigo || v.CodigoVeiculo || v.idVeiculo || ''),
-    marca: titulo(v.marca || v.Marca || v.fabricante || ''),
+    marca: titulo(v.marca || v.Marca || v.fabricante || '').replace(/\b(Bmw|Ktm|Ms|Brp|Mv|Cfmoto|Bmx)\b/g, function(x){ return x.toUpperCase(); }),
     modelo: v.modelo || v.Modelo || '', versao: v.versao || v.Versao || '',
     fab: num(v.anoFabricacao || v.AnoFabricacao || v.ano_fabricacao),
     ano: num(v.anoModelo || v.AnoModelo || v.ano_modelo || v.ano || v.Ano),
@@ -756,7 +756,7 @@ function deApi(v){
     fotos: fotos.length ? fotos : [FALLBACK], caracs: caracs,
     cambio: v.cambio || v.Cambio || '', comb: v.combustivel || v.Combustivel || ''
   };
-  if (m.modelo === m.modelo.toUpperCase()) m.modelo = titulo(m.modelo).replace(/\b(Abs|Cbs|Esdi|Gt|Hp|Rr|Sed|Ed|Dx|Adv|Nk|Nxr|Xre|Xtz|Ybr|Fz\d*|Cb|Cg|Cbr|Gsx-s|Mt-\d+|Xmax|Nmax)\b/g, function(s){ return s.toUpperCase(); });
+  if (m.modelo === m.modelo.toUpperCase()) m.modelo = titulo(m.modelo).replace(/\b(Abs|Cbs|Esdi|Gt|Hp|Rr|Sed|Ed|Dx|Adv|Nk|Nxr|Xre|Xtz|Ybr|Fz\d*|Cb|Cg|Cbr|Gsx-s|Mt-\d+|Xmax|Nmax|Gs|Nc|Pcx|Dlx|Xr|Sh|Gsx|Gsx-r\d*|\w*\d\w*)\b/g, function(s){ return s.toUpperCase(); });
   if (!m.fab) m.fab = m.ano;
   m.cat = v.categoria ? String(v.categoria).toLowerCase().replace(/\s|-/g,'') : categoria(m);
   return m;
@@ -765,14 +765,23 @@ function deApi(v){
 var MOTOS = [];
 function porId(id){ id = String(id); for (var i = 0; i < MOTOS.length; i++) if (MOTOS[i].id === id) return MOTOS[i]; return null; }
 function carregarEstoque(pronto){
-  MOTOS = ESTOQUE_ATUAL.map(deArray); pronto(false);
-  if (!MG.estoqueApi) return;
+  // Com a API configurada, espera o estoque real do AutoCerto (via N8N).
+  // O estoque embutido abaixo só aparece se a API falhar ou demorar mais de 8 s.
+  var usouEmbutido = false;
+  function embutido(motivo){
+    if (usouEmbutido) return; usouEmbutido = true;
+    if (motivo) console.warn('Estoque ao vivo indisponível, usando o estoque embutido.', motivo);
+    MOTOS = ESTOQUE_ATUAL.map(deArray); pronto(false);
+  }
+  if (!MG.estoqueApi){ embutido(); return; }
+  var limite = setTimeout(function(){ embutido('tempo esgotado'); }, 8000);
   fetch(MG.estoqueApi, {cache:'no-store'}).then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function(j){
       var lista = Array.isArray(j) ? j : (j.veiculos || j.estoque || j.data || j.items || j.Veiculos || []);
       var novas = lista.map(deApi).filter(function(m){ return m.id && m.modelo; });
-      if (novas.length){ MOTOS = novas; pronto(true); }
-    }).catch(function(e){ console.warn('Estoque ao vivo indisponível, usando o estoque embutido.', e); });
+      if (!novas.length) throw new Error('estoque vazio');
+      clearTimeout(limite); MOTOS = novas; pronto(true);
+    }).catch(function(e){ clearTimeout(limite); embutido(e); });
 }
 
 /* =====================================================================
